@@ -14,8 +14,10 @@ import tempfile
 from pathlib import Path
 
 import edge_tts
+import pytesseract
 from dotenv import load_dotenv
 from edge_tts.exceptions import NoAudioReceived
+from PIL import Image
 from telegram import (
     BotCommand,
     InlineKeyboardButton,
@@ -116,7 +118,8 @@ def two_column(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardB
 # -------------------------------------------------------------- commands ---
 
 HELP_TEXT = (
-    "Send me any text and I will send it back as an audio file.\n\n"
+    "Send me any text and I will send it back as an audio file.\n"
+    "Send me a photo of text and I will read out what it says.\n\n"
     "Commands:\n"
     "/voice - pick a voice from a menu\n"
     "/setvoice <name> - use any edge-tts voice, e.g. /setvoice en-US-AriaNeural\n"
@@ -199,6 +202,34 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------------------------------------ main logic ---
 
 
+async def synthesize_and_reply(message, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
+    """Turn text into speech and reply with the audio file. Returns True on success."""
+    voice = context.user_data.get("voice", DEFAULT_VOICE)
+    rate = context.user_data.get("rate", "+0%")
+    await context.bot.send_chat_action(message.chat_id, ChatAction.UPLOAD_VOICE)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "speech.mp3"
+        try:
+            await edge_tts.Communicate(text, voice, rate=rate).save(str(path))
+        except NoAudioReceived:
+            await message.reply_text("I could not turn that into speech. Try sending some plain text.")
+            return False
+        except Exception:
+            log.exception("Synthesis failed")
+            await message.reply_text("Something went wrong while creating the audio. Please try again.")
+            return False
+
+        with path.open("rb") as f:
+            await message.reply_audio(
+                audio=f,
+                filename="speech.mp3",
+                title=text[:60],
+                performer="Text to Speech",
+            )
+    return True
+
+
 @restricted
 async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -210,30 +241,41 @@ async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"That message is {len(text)} characters. The limit is {MAX_CHARS}. Please send it in smaller parts."
         )
         return
+    await synthesize_and_reply(message, context, text)
 
-    voice = context.user_data.get("voice", DEFAULT_VOICE)
-    rate = context.user_data.get("rate", "+0%")
-    await context.bot.send_chat_action(message.chat_id, ChatAction.UPLOAD_VOICE)
+
+@restricted
+async def image_to_speech(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    photo_or_doc = message.photo[-1] if message.photo else message.document
+    if photo_or_doc is None:
+        return
+
+    await context.bot.send_chat_action(message.chat_id, ChatAction.TYPING)
 
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "speech.mp3"
+        img_path = Path(tmp) / "image.jpg"
         try:
-            await edge_tts.Communicate(text, voice, rate=rate).save(str(path))
-        except NoAudioReceived:
-            await message.reply_text("I could not turn that into speech. Try sending some plain text.")
-            return
+            tg_file = await context.bot.get_file(photo_or_doc.file_id)
+            await tg_file.download_to_drive(str(img_path))
+            text = pytesseract.image_to_string(Image.open(img_path)).strip()
         except Exception:
-            log.exception("Synthesis failed")
-            await message.reply_text("Something went wrong while creating the audio. Please try again.")
+            log.exception("OCR failed")
+            await message.reply_text("I could not read that image. Try a clearer photo of the text.")
             return
 
-        with path.open("rb") as f:
-            await message.reply_audio(
-                audio=f,
-                filename="speech.mp3",
-                title=text[:60],
-                performer="Text to Speech",
-            )
+    if not text:
+        await message.reply_text("I could not find any text in that image.")
+        return
+
+    if len(text) > MAX_CHARS:
+        text = text[:MAX_CHARS]
+        await message.reply_text(
+            f"The text was longer than {MAX_CHARS} characters, so I trimmed it before reading it aloud."
+        )
+
+    await message.reply_text(f"Text I found:\n\n{text}")
+    await synthesize_and_reply(message, context, text)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -275,6 +317,7 @@ def main():
     app.add_handler(CommandHandler("setvoice", set_voice))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, speak))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, image_to_speech))
     app.add_error_handler(on_error)
 
     if WEBHOOK_BASE_URL:
