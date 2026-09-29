@@ -7,6 +7,7 @@ Built with `python-telegram-bot` and `edge-tts` (free, no API key needed).
 ## Features
 
 - Converts any text message to an MP3 file
+- Send a photo of text (a page, a sign, a screenshot) and it reads the text aloud
 - Per-user voice and speed settings that persist across restarts
 - Menu of ready made voices, or use any edge-tts voice by name
 - Optional allow list so only you can use it
@@ -76,16 +77,23 @@ docker build -t tts-bot .
 docker run -d --name tts-bot --env-file .env -v tts-bot-data:/app/data tts-bot
 ```
 
+## Image to speech
+
+Send a photo, or a document that is an image, and the bot runs OCR (Tesseract) on it, replies with the text it found so you can check it read correctly, then sends the audio.
+
+- Works best on clear, well-lit, mostly horizontal text. Handwriting and stylised fonts are unreliable.
+- Only English is installed by default. To read other languages, add the matching Tesseract language pack to the `Dockerfile` (for example `tesseract-ocr-fra` for French) and set `pytesseract.image_to_string(img, lang="fra")` in `bot.py`.
+
 ## Deploy on Render
 
 The bot switches to webhook mode automatically when it runs on Render, so it works as a web service, including the free plan.
 
 1. Push this repo to GitHub.
-2. In Render, choose **New**, then **Blueprint**, and select your repo. Render reads `render.yaml`.
+2. In Render, choose **New**, then **Blueprint**, and select your repo. Render reads `render.yaml` and builds from the `Dockerfile`, since OCR needs the Tesseract system package, not just a Python one.
 3. When prompted, enter `BOT_TOKEN`. Optionally enter `ALLOWED_USER_IDS` to keep the bot private.
 4. Deploy. On startup the bot registers its webhook with Telegram using the `RENDER_EXTERNAL_URL` that Render provides.
 
-You can also create a Web Service by hand: build command `pip install -r requirements.txt`, start command `python bot.py`, and add the same environment variables.
+You can also create a Web Service by hand: choose **Docker** as the runtime so the `Dockerfile` is used (it installs Tesseract), and add the same environment variables.
 
 Things to know about the free plan:
 
