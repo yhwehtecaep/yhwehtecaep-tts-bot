@@ -8,6 +8,7 @@ Built with `python-telegram-bot` and `edge-tts` (free, no API key needed).
 
 - Converts any text message to an MP3 file
 - Send a photo of text (a page, a sign, a screenshot) and it reads the text aloud
+- Send a PDF and it turns it into audio, split into parts for long documents
 - Per-user voice and speed settings that persist across restarts
 - Menu of ready made voices, or use any edge-tts voice by name
 - Optional allow list so only you can use it
@@ -61,6 +62,9 @@ All settings live in `.env`.
 | `MAX_CHARS` | No | Max characters per message, default `10000` |
 | `ALLOWED_USER_IDS` | No | Comma separated user IDs. Empty means everyone can use the bot |
 | `DATA_DIR` | No | Folder for saved settings, default `data` |
+| `PDF_MAX_CHARS` | No | Max characters read from one PDF, default `50000` |
+| `PART_CHARS` | No | Characters per audio file for PDFs, default `8000` |
+| `OCR_MAX_PAGES` | No | Page cap for scanned PDFs, default `10` |
 
 To lock the bot to yourself, run it once, send `/id`, put the number in `ALLOWED_USER_IDS`, and restart.
 
@@ -83,6 +87,17 @@ Send a photo, or a document that is an image, and the bot runs OCR (Tesseract) o
 
 - Works best on clear, well-lit, mostly horizontal text. Handwriting and stylised fonts are unreliable.
 - Only English is installed by default. To read other languages, add the matching Tesseract language pack to the `Dockerfile` (for example `tesseract-ocr-fra` for French) and set `pytesseract.image_to_string(img, lang="fra")` in `bot.py`.
+
+## PDF to speech
+
+Send a PDF as a file and the bot extracts the text, tidies it up so it reads naturally, and sends it back as audio. Long documents are split into several audio files of about 8,000 characters each (roughly 8 minutes), sent in order.
+
+- To read only some pages, add a caption when you send the PDF: `5-10` for a range, or `7` for a single page.
+- Scanned PDFs (pages that are just pictures) are detected automatically and read with OCR. OCR is limited to 10 pages at a time, so use a page caption to read the rest.
+- A PDF is trimmed to the first 50,000 characters. Change this with `PDF_MAX_CHARS`.
+- Telegram only lets bots download files up to 20 MB.
+- Password protected PDFs cannot be read.
+- Tables, columns and footnotes are read in whatever order the PDF stores them, so complicated layouts may sound jumbled.
 
 ## Deploy on Render
 
